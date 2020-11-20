@@ -16,6 +16,17 @@ syscall_init (void)
 static void
 syscall_handler (struct intr_frame *f UNUSED)
 {
-  printf ("system call!\n");
+  
+
+  /* de-reference stack pointer */
+
+  /* get the system call enum number */
+  int syscallnum = *((int*)f->esp);
+
+  int par = *((int*)f->esp+4);
+
+  printf ("syscall_handler -> invoked call! type %d\n", syscallnum); /* system call */
+
+
   thread_exit ();
 }
