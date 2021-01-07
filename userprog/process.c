@@ -36,10 +36,17 @@ process_execute (const char *file_name)
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+	
+    strlcpy (fn_copy, file_name, PGSIZE);
+	char *save_ptr, *real_name; // variables for strtok_r  
+	
+	// strip the arguments from the actual file name of the program
+	real_name = strtok_r(file_name, " ", &save_ptr);
+	
+	printf("process_execute -> real_name = %s  file_name = %s\n", real_name, file_name);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (real_name, PRI_DEFAULT, start_process, fn_copy);
 
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
@@ -54,6 +61,8 @@ start_process (void *file_name_)
   char *file_name = file_name_;
   struct intr_frame if_;
   bool success;
+	
+	printf("start_process -> file_name = %s\n", file_name);
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -203,7 +212,7 @@ struct Elf32_Phdr
 #define PF_W 2          /* Writable. */
 #define PF_R 4          /* Readable. */
 
-static bool setup_stack (void **esp);
+static bool setup_stack (void **esp, char ** argv, int argc);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
@@ -223,18 +232,36 @@ load (const char *file_name, void (**eip) (void), void **esp)
   bool success = false;
   int i;
 
+	char file_name_copy[100];   
+	strlcpy(file_name_copy, file_name, 100);   
+	char *argv[255]; 
+	int argc; 
+	char *save_ptr;
+	
+	argv[0] = strtok_r(file_name_copy, " ", &save_ptr);  
+	
+	char *token;   
+	argc = 1; 
+	
+	while((token = strtok_r(NULL, " ", &save_ptr))!=NULL) 
+	{ 
+		argv[argc++] = token; 
+	}
+	
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
   if (t->pagedir == NULL) 
     goto done;
   process_activate ();
 
+	printf("load -> argv[0] = %s\n", argv[0]);
+	
   /* Open executable file. */
-  file = filesys_open (file_name);
+  file = filesys_open (argv[0]);
 
   if (file == NULL) 
     {
-	printf ("load: %s: open failed\n", file_name);
+	  printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
 
@@ -311,7 +338,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
 
   /* Set up stack. */
-  if (!setup_stack (esp))
+  if (!setup_stack (esp, argv, argc))
     goto done;
 
   /* Start address. */
@@ -436,21 +463,65 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
 static bool
-setup_stack (void **esp) 
+setup_stack (void **esp,  char **argv, int argc) 
 {
   uint8_t *kpage;
   bool success = false;
+	
+  printf( "setup_stack -> esp = %s, argv = %s, argc = %d \n", esp, argv, argc );
 
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL) 
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success) {
-	/* changed this to - 15 on phys base */
-        *esp = PHYS_BASE - 12;
+      if (success) 
+	  {
+			
+		  *esp = PHYS_BASE; 		// get the stack
+		  int i = argc;				// get the argument number from the load function       
+		  uint32_t * arr[argc];   	// this array holds reference to differences arguments in the stack       
+
+		  // while i less than or equal to 0 decrement i by 1
+		  while(--i >= 0) 
+		  { 
+			  // subtrack the length of the argument + 1 * size of the char (1 byte) size from the stack
+			  *esp = *esp -(strlen(argv[i])+1)*sizeof(char);
+			  
+			  // set element at i with the refernce of esp e.g. the arguments stored in the stack
+			  arr[i] = (uint32_t *)*esp;
+			  
+			  // copying the argument to the esp (stack) at i;
+			  memcpy(*esp,argv[i],strlen(argv[i])+1);
+		  } 
+
+		  *esp = *esp -4; 			// subtrack 4 from the stack
+		  (*(int *)(*esp)) = 0;		// sentinel:: set the value 0 int           
+		  i = argc;         		// set i to arg num because it already got decremented
+
+		  // while i less than or equal to 0 decrement i by 1
+		  while( --i >= 0) 
+		  { 
+			  *esp = *esp -4;					// subtrack 4 from the stack
+			  (*(uint32_t **)(*esp)) = arr[i]; 	// reference to an arugment pointer in the stack as int 32
+		  } 
+
+		  
+		  // as far as everyone is aware it shifts the data into the bottom section of the hex dump
+		  
+		  *esp = *esp -4; 
+		  (*(uintptr_t  **)(*esp)) = (*esp+4); 
+		  *esp = *esp -4; 
+		  *(int *)(*esp) = argc; 
+		  *esp = *esp -4; 
+		  (*(int *)(*esp))=0;
+		  
       } else
         palloc_free_page (kpage);
     }
+
+	// debug hex dump :: prints out contents of the stack between base and current esp posistion
+	hex_dump(PHYS_BASE, *esp, PHYS_BASE-(*esp), true);   
+	
   return success;
 }
 

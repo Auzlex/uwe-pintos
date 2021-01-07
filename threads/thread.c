@@ -179,6 +179,8 @@ thread_create (const char *name, int priority,
   struct switch_entry_frame *ef;
   struct switch_threads_frame *sf;
   tid_t tid;
+	
+  printf( "thread_create -> name = %s\n", name );
 
   ASSERT (function != NULL);
 
