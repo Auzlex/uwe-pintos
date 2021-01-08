@@ -100,6 +100,9 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+	
+	// assigned exit code for the thread
+	int exit_code;
   };
 
 /* If false (default), use round-robin scheduler.

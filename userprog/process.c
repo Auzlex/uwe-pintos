@@ -109,28 +109,32 @@ process_wait (tid_t child_tid UNUSED)
 void
 process_exit (void)
 {
-  struct thread *cur = thread_current ();
-  uint32_t *pd;
+	struct thread *cur = thread_current ();
+	uint32_t *pd;
 
-  /* Destroy the current process's page directory and switch back
-     to the kernel-only page directory. */
-  pd = cur->pagedir;
-  if (pd != NULL) 
-    {
-      /* Correct ordering here is crucial.  We must set
-         cur->pagedir to NULL before switching page directories,
-         so that a timer interrupt can't switch back to the
-         process page directory.  We must activate the base page
-         directory before destroying the process's page
-         directory, or our active page directory will be one
-         that's been freed (and cleared). */
-      cur->pagedir = NULL;
-      pagedir_activate (NULL);
-      pagedir_destroy (pd);
+	// assign the thread exit code to the structure
+	cur->exit_code = thread_exitcode();
 
-	/* get current name */
-      	printf("%s: exit(0)\n",cur->name);
-    }
+	/* Destroy the current process's page directory and switch back
+	to the kernel-only page directory. */
+	pd = cur->pagedir;
+	
+	if (pd != NULL) 
+	{
+		/* Correct ordering here is crucial.  We must set
+		 cur->pagedir to NULL before switching page directories,
+		 so that a timer interrupt can't switch back to the
+		 process page directory.  We must activate the base page
+		 directory before destroying the process's page
+		 directory, or our active page directory will be one
+		 that's been freed (and cleared). */
+		cur->pagedir = NULL;
+		pagedir_activate (NULL);
+		pagedir_destroy (pd);
+
+		/* get current name */
+		printf("%s: exit(0)\n",cur->name);
+	}
 }
 
 /* Sets up the CPU for running user code in the current
@@ -507,13 +511,21 @@ setup_stack (void **esp,  char **argv, int argc)
 
 		  
 		  // as far as everyone is aware it shifts the data into the bottom section of the hex dump
+		  *esp = *esp -4; // shift the data in the stack by moving it back by 4
 		  
-		  *esp = *esp -4; 
+		  // shift data in 4 segments in stack of c0000000 c0000010
 		  (*(uintptr_t  **)(*esp)) = (*esp+4); 
+		  
+		  // shift everything in the stack back by 4 again
 		  *esp = *esp -4; 
+		  
+		  // inject our argc arguments number which is stored at the top as 02 if the command is "echo x"
 		  *(int *)(*esp) = argc; 
-		  *esp = *esp -4; 
-		  (*(int *)(*esp))=0;
+		  
+		  // move everything in the stack by negative 4
+		  *esp = *esp -4;
+		  
+		  (*(int *)(*esp)) = 0; // another sentinel stack pointer target to be 0
 		  
       } else
         palloc_free_page (kpage);
