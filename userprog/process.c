@@ -143,16 +143,51 @@ process_exit (void)
 void
 process_activate (void)
 {
-  struct thread *t = thread_current ();
+	struct thread *t = thread_current ();
+	
+	//printf("process_activate t name = %s\n", t->name);
 
-  /* Activate thread's page tables. */
-  pagedir_activate (t->pagedir);
+	/* say the thread has sucessfully loaded */
+	t->is_child_loaded = true;
 
-  /* Set thread's kernel stack for use in processing
-     interrupts. */
-  tss_update ();
+	/* Activate thread's page tables. */
+	pagedir_activate (t->pagedir);
+
+	/* Set thread's kernel stack for use in processing
+	 interrupts. */
+	tss_update ();
 }
-
+
+/* Functios for handling child processes */
+
+/* get_child_process */
+/*struct thread *get_child_process(int pid)
+{
+	struct list *child_list = &(thread_current()->child_list);
+	struct thread *child_process = NULL;
+	struct list_elem *element;
+
+	//find child process and return
+	for(element=list_begin(child_list); element != list_end(child_list);            		element=list_next(element))
+	{
+		child_process = list_entry(element,struct thread,childelem);
+		if(child_process->tid == pid)
+			return child_process;
+	}
+	return NULL;     
+}*/
+/* remove_child_process */
+/*void
+remove_child_process(struct thread *cp)
+{
+	if(cp != NULL)
+	{
+		list_remove(&(cp->childelem));
+		palloc_free_page(cp);
+	}
+}*/
+
+
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 
@@ -355,7 +390,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   file_close (file);
   return success;
 }
-
+
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);

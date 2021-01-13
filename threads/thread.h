@@ -88,19 +88,22 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
+	
     struct list_elem allelem;           /* List element for all threads list. */
-
+	
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
       
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+	
+	bool is_child_loaded;				/* Boolean to determine if a thread has been loaded false no, true yes */
 #endif
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
-	
+
 	// assigned exit code for the thread
 	int exit_code;
   };
