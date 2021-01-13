@@ -11,15 +11,15 @@ enum
     SYS_EXEC,                   /* Start another process. */					// broken needs child process implemented
     SYS_WAIT,                   /* Wait for a child process to die. */			// also requires child processes
 		
-    SYS_CREATE,                 /* Create a file. */
-    SYS_REMOVE,                 /* Delete a file. */
-    SYS_OPEN,                   /* Open a file. */
-    SYS_FILESIZE,               /* Obtain a file's size. */
-    SYS_READ,                   /* Read from a file. */
+    SYS_CREATE,                 /* Create a file. */							// done
+    SYS_REMOVE,                 /* Delete a file. */							// fa w doing this one		
+    SYS_OPEN,                   /* Open a file. */								// charles	
+    SYS_FILESIZE,               /* Obtain a file's size. */						// Chris doing this one
+    SYS_READ,                   /* Read from a file. */							// fa w doing this one		
     SYS_WRITE,                  /* Write to a file. */							// done
-    SYS_SEEK,                   /* Change position in a file. */
-    SYS_TELL,                   /* Report current position in a file. */
-    SYS_CLOSE,                  /* Close a file. */
+    SYS_SEEK,                   /* Change position in a file. */				// Chris doing this one
+    SYS_TELL,                   /* Report current position in a file. */		// fa w doing this one		
+    SYS_CLOSE,                  /* Close a file. */								// Chris doing this one
 
     /* Project 3 and optionally project 4. */
     SYS_MMAP,                   /* Map a file into memory. */
