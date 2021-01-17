@@ -55,6 +55,36 @@ bool AutoValidatePointer(uint32_t *esp, int a)
 
 /* 
 
+	File loading functions 
+
+*/
+
+// Function to check all the files in the current thread and return the file descriptor with the corresponding fd number
+struct file_desc * get_file_descriptor(int fd) {
+	// Get the current thread
+	struct thread * current_thread = thread_current();
+	// Create a list element to hold the current file descriptor while traversing the linked list
+  	struct list_elem * current_element;
+  	// Create a blank file_desc to store a succesful match
+  	struct file_desc * return_descriptor = NULL;
+  	// Traverse each element in the linked list of file_descriptors in the current thread
+  	for (current_element = list_begin(&current_thread->file_list); current_element != list_end(&current_thread->file_list); current_element = list_next(current_element)) {
+    	// Get the file_desc structure from the current position in the lisr
+    	struct file_desc * file_descriptor = list_entry(current_element, struct file_desc, elem);
+    	// If the current file_descriptors fd number is the same as the fd argument
+    	if (file_descriptor->fd == fd) {
+    		// Save the file descriptor to a variable
+    		return_descriptor = file_descriptor;
+    		// Break the loop
+    		break;
+      	}
+  	} 
+  	// Return the return_descriptor (null if nothing matched)
+  	return return_descriptor;
+}
+
+/* 
+
 	Syscall Implemented Functions
 
 */
@@ -147,8 +177,7 @@ bool create(char* filename, unsigned size)
 }
 
 // Function to remove a file from the filesystem.dsk
-bool remove_file(char* filename)
-{
+bool remove_file(char* filename) {
 	// Create a boolean to store whether the file remove was successful
 	bool success;
 	// Begin synchronization
@@ -165,8 +194,7 @@ bool remove_file(char* filename)
 }
 
 // Function to read a designated amount of data from a file
-static int read(int fd, void *dataBuf, unsigned readSize)
-{
+static int read(int fd, void *dataBuf, unsigned readSize) {
 	/* Validation */
 	// Copy the inputted dataBuffer into a byte called buffer
 	uint8_t buffer = (uint8_t *) dataBuf;
@@ -175,24 +203,23 @@ static int read(int fd, void *dataBuf, unsigned readSize)
   	unsigned data = 0;
   	// If the file descriptor is the standard input (0) .aka reading from the keyboard
   	if (fd == STDIN_FILENO) {
-  		// Create a byte
-      	uint8_t byte;
-      	// While the data to be returned is smaller than the maxium amount of data to be returned and the keyboard input isn't 0
-      	while (data < readSize && (byte = input_getc()) != 0) {
-      		// Set the value of the buffer byte to to the keyboard input and increment the buffer
-        	*buffer++ = byte;
-        	// Increment the data integer
-          	data ++;
-        }
-        // Return the data integer
-    	return (int) data;
+  		// While data is smaller than the read size
+		while (data < readSize) {
+			// Store the keyboard input as the dataBuf
+      		*((char *)dataBuf+data) = input_getc();
+      		// Increment the data variable
+      		data++;
+    	}
+    	// Return the data variable
+		return data;
     }
 
     /* Load the file from the file decriptor */
     // Sychronisation - aquire a lock from the current thread so that the file can't be edited while accessing it
   	lock_acquire(&filesys_lock);
   	// Get the file descriptor for the corresponding fd number
-  	struct file_desc * file_descriptor = get_file_descriptor(fd);
+  	struct file_desc * file_descriptor;
+  	file_descriptor = get_file_descriptor(fd);
   	// Get the file from the file_descriptor
   	struct file* file = file_descriptor->fp;
   	// If the file is NULL
@@ -219,7 +246,7 @@ static unsigned tell(int fd) {
   	// Get the file descriptor for the corresponding fd number
   	struct file_desc * file_descriptor = get_file_descriptor(fd);
   	// Get the file from the file_descriptor
-  	struct file* file = file_descriptor->fp;
+  	struct file* acFile = file_descriptor->fp;
   	// If the file is Null
   	if (acFile == NULL) {
   		// Release the file
@@ -232,30 +259,6 @@ static unsigned tell(int fd) {
   	// Release the file
   	lock_release(&filesys_lock);
   	return pos;
-}
-
-// Function to check all the files in the current thread and return the file descriptor with the corresponding fd number
-struct file_desc * get_file_descriptor(int fd) {
-	// Get the current thread
-	struct thread * current_thread = thread_current();
-	// Create a list element to hold the current file descriptor while traversing the linked list
-  	struct list_elem * current_element;
-  	// Create a blank file_desc to store a succesful match
-  	struct file_desc * return_descriptor = NULL;
-  	// Traverse each element in the linked list of file_descriptors in the current thread
-  	for (current_element = list_begin(&current_thread->file_list); current_element != list_end(&current_thread->file_list); current_element = list_next(current_element)) {
-    	// Get the file_desc structure from the current position in the lisr
-    	struct file_desc * file_descriptor = list_entry(e, struct file_desc, elem);
-    	// If the current file_descriptors fd number is the same as the fd argument
-    	if (file_descriptor->fd == fd) {
-    		// Save the file descriptor to a variable
-    		return_descriptor = file_descriptor;
-    		// Break the loop
-    		break;
-      	}
-  	} 
-  	// Return the return_descriptor (null if nothing matched)
-  	return return_descriptor;
 }
 
 // called when a sys call is not implemented
@@ -373,9 +376,9 @@ syscall_handler (struct intr_frame *f UNUSED)
 		case SYS_REMOVE:
 			printf("SYS_REMOVE called\n");
 			// Get the file name from the stack
-			char* file_name = ((char*) *(f->esp + 4));
+			char* fileName = ((char*) *((int*)f->esp + 1));
 			// Remove the file and save the result to
-			f->eax = remove_file(file_name);
+			f->eax = remove_file(fileName);
 			break;
 		case SYS_OPEN:
 			
@@ -387,7 +390,7 @@ syscall_handler (struct intr_frame *f UNUSED)
 			// Implement 
 			
 			break;
-		case SYS_READ:
+		case SYS_READ:;
 			printf("SYS_READ called\n");
 			// Get the file descriptor from the stack
 			int file_d = *(int *)(f->esp + 4);
