@@ -146,6 +146,70 @@ bool create(char* filename, unsigned size)
 	return success;
 }
 
+// Function to remove a file from the filesystem.dsk
+bool remove_file(char* filename)
+{
+	// Create a boolean to store whether the file remove was successful
+	bool success;
+	// Begin synchronization
+	lock_acquire (&syscall_lock);
+	printf("remove(filename: %s) -> invoking filesys_remove\n", filename);
+	// Remove the file and save the result to the success variable
+	success = filesys_remove(filename);  
+	// Print whether this was successful
+	printf("success: %s\n", success ? "true" : "false");
+	// End synchronization
+	lock_release (&syscall_lock);
+	// Return the success variable
+	return success;
+}
+
+// Function to read a designated amount of data from a file
+static int read(int fd, void *dataBuf, unsigned readSize)
+{
+	/* Validation */
+	// Copy the inputted dataBuffer into a byte called buffer
+	uint8_t buffer = (uint8_t *) dataBuf;
+
+  	// Create an unsigned int to store the data from the file
+  	unsigned data = 0;
+  	// If the file descriptor is the standard input (0) .aka reading from the keyboard
+  	if (fd == STDIN_FILENO) {
+  		// Create a byte
+      	uint8_t byte;
+      	// While the data to be returned is smaller than the maxium amount of data to be returned and the keyboard input isn't 0
+      	while (data < readSize && (byte = input_getc()) != 0) {
+      		// Set the value of the buffer byte to to the keyboard input and increment the buffer
+        	*buffer++ = byte;
+        	// Increment the data integer
+          	data ++;
+        }
+        // Return the data integer
+    	return (int) data;
+    }
+
+    /* Load the file from the file decriptor */
+    // Sychronisation - aquire a lock from the current thread so that the file can't be edited while accessing it
+  	lock_acquire(&filesys_lock);
+  	// Get the file from the filesystem
+  	struct file* fp = filesys_open(filename);
+  	// If the file is NULL
+  	if (fp == NULL) {
+  		// Relase the file
+    	lock_release(&filesys_lock);
+    	// Return -1 representing a failure
+    	return -1;
+    }
+
+  	// Set the data to the results of a file read
+  	data = file_read(file, dataBuf, readSize);
+
+  	// Release the file being read
+  	lock_release(&filesys_lock);
+  	// Return the data from the file as an integer
+	return (int) data;
+}
+
 // called when a sys call is not implemented
 void throw_not_implemented_message_and_terminate_thread(int syscallnum)
 {
@@ -259,9 +323,11 @@ syscall_handler (struct intr_frame *f UNUSED)
 			
 			break;
 		case SYS_REMOVE:
-			
-			// Implement 
-			
+			printf("SYS_REMOVE called\n");
+			// Get the file name from the stack
+			char* filename = ((char*) *(esp + 4));
+			// Remove the file and save the result to
+			f->eax = remove_file(filename);
 			break;
 		case SYS_OPEN:
 			
@@ -274,9 +340,15 @@ syscall_handler (struct intr_frame *f UNUSED)
 			
 			break;
 		case SYS_READ:
-			
-			// Implement 
-			
+			printf("SYS_READ called\n");
+			// Get the file descriptor from the stack
+			int fd = *(int *)(esp + 4);
+			// Get the buffer from the stack
+			void *buffer = *(char**)(esp + 8);
+			// Set the size 
+			unsigned size = *(unsigned *)(esp + 12);
+			// Read the file and save it to the eax register
+			f->eax = read(fd, buffer, size);
 			break;
 		case SYS_WRITE:; // invoked on system write
 			
