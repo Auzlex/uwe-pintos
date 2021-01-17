@@ -191,10 +191,12 @@ static int read(int fd, void *dataBuf, unsigned readSize)
     /* Load the file from the file decriptor */
     // Sychronisation - aquire a lock from the current thread so that the file can't be edited while accessing it
   	lock_acquire(&filesys_lock);
-  	// Get the file from the filesystem
-  	struct file* fp = filesys_open(filename);
+  	// Get the file descriptor for the corresponding fd number
+  	struct file_desc * file_descriptor = get_file_descriptor(fd);
+  	// Get the file from the file_descriptor
+  	struct file* file = file_descriptor->fp;
   	// If the file is NULL
-  	if (fp == NULL) {
+  	if (file == NULL) {
   		// Relase the file
     	lock_release(&filesys_lock);
     	// Return -1 representing a failure
@@ -208,6 +210,52 @@ static int read(int fd, void *dataBuf, unsigned readSize)
   	lock_release(&filesys_lock);
   	// Return the data from the file as an integer
 	return (int) data;
+}
+
+// Get the position of the from the beggining in the open file (file descriptor)
+static unsigned tell(int fd) {
+    // Synchronisation - lock the file so that it cannot be opened by another process
+  	lock_acquire(&filesys_lock);
+  	// Get the file descriptor for the corresponding fd number
+  	struct file_desc * file_descriptor = get_file_descriptor(fd);
+  	// Get the file from the file_descriptor
+  	struct file* file = file_descriptor->fp;
+  	// If the file is Null
+  	if (acFile == NULL) {
+  		// Release the file
+      	lock_release(&filesys_lock);
+      	// Return -1 representing a failure
+      	return -1;
+    }
+  	// Get the actual position in the file
+  	unsigned pos = file_tell(acFile);
+  	// Release the file
+  	lock_release(&filesys_lock);
+  	return pos;
+}
+
+// Function to check all the files in the current thread and return the file descriptor with the corresponding fd number
+struct file_desc * get_file_descriptor(int fd) {
+	// Get the current thread
+	struct thread * current_thread = thread_current();
+	// Create a list element to hold the current file descriptor while traversing the linked list
+  	struct list_elem * current_element;
+  	// Create a blank file_desc to store a succesful match
+  	struct file_desc * return_descriptor = NULL;
+  	// Traverse each element in the linked list of file_descriptors in the current thread
+  	for (current_element = list_begin(&current_thread->file_list); current_element != list_end(&current_thread->file_list); current_element = list_next(current_element)) {
+    	// Get the file_desc structure from the current position in the lisr
+    	struct file_desc * file_descriptor = list_entry(e, struct file_desc, elem);
+    	// If the current file_descriptors fd number is the same as the fd argument
+    	if (file_descriptor->fd == fd) {
+    		// Save the file descriptor to a variable
+    		return_descriptor = file_descriptor;
+    		// Break the loop
+    		break;
+      	}
+  	} 
+  	// Return the return_descriptor (null if nothing matched)
+  	return return_descriptor;
 }
 
 // called when a sys call is not implemented
@@ -325,9 +373,9 @@ syscall_handler (struct intr_frame *f UNUSED)
 		case SYS_REMOVE:
 			printf("SYS_REMOVE called\n");
 			// Get the file name from the stack
-			char* filename = ((char*) *(esp + 4));
+			char* file_name = ((char*) *(f->esp + 4));
 			// Remove the file and save the result to
-			f->eax = remove_file(filename);
+			f->eax = remove_file(file_name);
 			break;
 		case SYS_OPEN:
 			
@@ -342,13 +390,13 @@ syscall_handler (struct intr_frame *f UNUSED)
 		case SYS_READ:
 			printf("SYS_READ called\n");
 			// Get the file descriptor from the stack
-			int fd = *(int *)(esp + 4);
+			int file_d = *(int *)(f->esp + 4);
 			// Get the buffer from the stack
-			void *buffer = *(char**)(esp + 8);
+			void *buff = *(char**)(f->esp + 8);
 			// Set the size 
-			unsigned size = *(unsigned *)(esp + 12);
+			unsigned length = *(unsigned *)(f->esp + 12);
 			// Read the file and save it to the eax register
-			f->eax = read(fd, buffer, size);
+			f->eax = read(file_d, buff, length);
 			break;
 		case SYS_WRITE:; // invoked on system write
 			
@@ -383,9 +431,11 @@ syscall_handler (struct intr_frame *f UNUSED)
 			
 			break;
 		case SYS_TELL:
-			
-			// Implement 
-			
+			// Get the file descriptor value from the stack
+			fd = *(int *)(f->esp + 4);
+			// Get the position in the file from the file descriptor number and save it tot he eax register
+			f->eax = tell(fd);
+			// Break the switch statement
 			break;
 		case SYS_CLOSE:
 			
