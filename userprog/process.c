@@ -20,6 +20,7 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+struct child * get_child(tid_t,struct thread *);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -100,9 +101,69 @@ int
 process_wait (tid_t child_tid UNUSED) 
 {
     // FIXME: @bgaster --- quick hack to make sure processes execute!
-  for(;;) ;
+  	for(;;) ;
     
-  return -1;
+  //return -1;
+	
+	// we will check our thread for children if its empty then return -1 status code
+	if(list_empty(&thread_current()->children))
+    	return -1;
+	
+	/* If current thread has no child with id = child_tid
+	return -1 */
+	
+	// get the current child within the current thread
+	struct child * child = get_child(child_tid,thread_current());
+
+	// if its null return -1 status code
+	if(child == NULL)
+	{
+		return -1;
+	}
+
+	// Set waiton_child of current thread to child_tid
+	thread_current()->waiton_child = child_tid;
+
+	// we check if the child is still alive, if it has not updated its parent struct then we need to sleep it
+	if (child->used != 1)
+		sema_down(&thread_current()->child_sem);
+
+	// Tests the value of expression. If it evaluates to zero (false), the kernel panics.
+	ASSERT (child->used == 1);
+	
+	// Retrieve return value 
+	int child_value = child->ret_val;
+
+	// Remove child from children's list and free its memory
+	list_remove(&child->elem);
+	
+	// free child
+	free(child);
+
+	// return child value
+	return child_value;
+}
+
+// struct get child
+struct child * get_child(tid_t id,struct thread * curr)
+{
+	// our itertable list
+	struct list_elem * e;
+	
+	// for every element in list start to end
+	for (e= list_begin(&curr->children); e!= list_end( &curr->children); e=list_next(e))
+	{
+		
+		// get the child
+		struct child * child = list_entry(e,struct child,elem);
+		
+		// compare id to find matching id
+		if(child->id == id)
+	  		return child; // return matching id
+	}
+	
+	// if no child is fouind return null
+	return NULL;
 }
 
 /* Free the current process's resources. */

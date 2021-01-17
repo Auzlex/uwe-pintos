@@ -5,6 +5,9 @@
 #include <list.h>
 #include <stdint.h>
 
+// contains semaphore struct
+#include "synch.h"
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -101,11 +104,29 @@ struct thread
 	bool is_child_loaded;				/* Boolean to determine if a thread has been loaded false no, true yes */
 #endif
 
-    /* Owned by thread.c. */
-    unsigned magic;                     /* Detects stack overflow. */
-
 	// assigned exit code for the thread
 	int exit_code;
+	
+	// List of open files with (fd) -> (file *) mapping
+    struct list file_list;
+	
+	// Total count of open files will assist in granting fd to a new file
+    int fd_count;
+	
+	// List of child process in the form of struct child defined in process.h
+    struct list children;
+    
+    // Reference to parent thread will be used for passing return status to parent thread
+    struct thread * parent;
+	
+	// Used when a thread waits for a child
+    struct semaphore child_sem;
+	
+    // To keep track of the child a thread has been waiting for
+    tid_t waiton_child;
+	
+	/* Owned by thread.c. */
+    unsigned magic;                     /* Detects stack overflow. */
   };
 
 /* If false (default), use round-robin scheduler.
