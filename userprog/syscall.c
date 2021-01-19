@@ -11,6 +11,7 @@
 
 #include "filesys/filesys.h"
 
+int grabFromStack(struct intr_frame *f UNUSED, int pos);
 void syscall_init (void);
 bool IsValidVAddress(void * vaddress);
 
@@ -42,6 +43,15 @@ void syscall_init (void)
 }
 
 /* 
+	Helper Functions
+*/
+
+int grabFromStack(struct intr_frame *f UNUSED, int pos)
+{
+	return *((int *) (f->esp + pos));
+}
+
+/* 
 	Memory Validation Functions
 */
 
@@ -56,6 +66,35 @@ bool IsValidVAddress(void * vaddress)
 	// e.g the current threads pagedir. Check for null pointer if the UADDR is unmapped
 	return (is_user_vaddr(vaddress) && pagedir_get_page(cur->pagedir,vaddress));
 }
+
+/* 
+	File loading functions 
+*/
+
+// Function to check all the files in the current thread and return the file descriptor with the corresponding fd number
+struct file_desc * get_file_descriptor(int fd) {
+	// Get the current thread
+	struct thread * current_thread = thread_current();
+	// Create a list element to hold the current file descriptor while traversing the linked list
+  	struct list_elem * current_element;
+  	// Create a blank file_desc to store a succesful match
+  	struct file_desc * return_descriptor = NULL;
+  	// Traverse each element in the linked list of file_descriptors in the current thread
+  	for (current_element = list_begin(&current_thread->file_list); current_element != list_end(&current_thread->file_list); current_element = list_next(current_element)) {
+    	// Get the file_desc structure from the current position in the lisr
+    	struct file_desc * file_descriptor = list_entry(current_element, struct file_desc, elem);
+    	// If the current file_descriptors fd number is the same as the fd argument
+    	if (file_descriptor->fd == fd) {
+    		// Save the file descriptor to a variable
+    		return_descriptor = file_descriptor;
+    		// Break the loop
+    		break;
+      	}
+  	} 
+  	// Return the return_descriptor (null if nothing matched)
+  	return return_descriptor;
+}
+
 
 /* 
 	Syscall Implemented Functions
@@ -85,44 +124,12 @@ void exit(int status)
 	thread_exit();
 }
 
-// start another process
-/*tid_t exec(const char* cmd_line)
-{
-	// debug log
-    if(debug)
-	    printf( "syscall.c -> exec(const char* cmd_Line = %s) -> invoked!\n", cmd_line );
-
-	// reference to child_process 
-	struct thread *child_process;
-	tid_t pid;
-	
-	// begin synchronization :: 
-	lock_acquire(&syscall_lock);
-	
-	// begin a new process and store its processID into pid_t
-	pid = process_execute(cmd_line);
-	
-	// get the child process
-	child_process = get_child_process(pid);
-	
-	// end synchronization :: 
-	lock_release(&syscall_lock);
-	
-	// check if the child process successfully loaded if so return the process id
-	// else return -1 :: -1 implies the process id is not valid
-	// "Must return pid -1, which otherwise should not be a valid pid, if the program cannot load or run for any reason"
-	if(child_process->is_child_loaded==true)
-	{
-		return pid;
-	}
-	else
-	{
-		return -1;
-	}
-}*/
-
+// called by another application when we want to execute another process
 tid_t exec(const char * cmd_line)
 {
+	//struct thread *cur; // reference to current thread
+	//struct process *p; // reference to child process
+	
 	// debug log
     if(debug)
 	    printf( "syscall.c -> exec(const char* cmd_Line = %s) -> invoked!\n", cmd_line );
@@ -130,9 +137,6 @@ tid_t exec(const char * cmd_line)
 	// reference to child_process 
 	//struct thread *child_process;
 	tid_t pid;
-	
-	// begin synchronization :: 
-	//lock_acquire(&syscall_lock);
 	
 	// null check that input
 	if(cmd_line == NULL)
@@ -144,31 +148,26 @@ tid_t exec(const char * cmd_line)
 		return -1;
 	}
 
+	// begin synchronization :: 
+	lock_acquire(&syscall_lock);
+	
 	// begin a new process and store its processID into pid_t
 	pid = process_execute(cmd_line);
 	
-	// get the child process
-	//child_process = get_child_process(pid);
-	
 	// end synchronization :: 
-	//lock_release(&syscall_lock);
+	lock_release(&syscall_lock);
 	
-	// check if the child process successfully loaded if so return the process id
-	// else return -1 :: -1 implies the process id is not valid
-	// "Must return pid -1, which otherwise should not be a valid pid, if the program cannot load or run for any reason"
-	//if(child_process->is_child_loaded==true)
-	//{
 	return pid;
-	//}
-	//else
-	//{
-		//return -1;
-	//}
+
 }
 
 // Waits for a child process pidand retrieves the child's exit status. 
 int wait(tid_t id)
 {
+	
+	if(debug)
+		printf("wait( tid_t = %d ) -> invoked\n", (int)id);
+	
 	// invoke process_wait
   	tid_t tid = process_wait(id);
   	return tid;
@@ -194,6 +193,23 @@ bool create(char* filename, unsigned size)
 	// end synchronization :: 
 	lock_release (&syscall_lock);
 	
+	return success;
+}
+
+// Function to remove a file from the filesystem.dsk
+bool remove_file(char* filename) {
+	// Create a boolean to store whether the file remove was successful
+	bool success;
+	// Begin synchronization
+	lock_acquire (&syscall_lock);
+	printf("remove(filename: %s) -> invoking filesys_remove\n", filename);
+	// Remove the file and save the result to the success variable
+	success = filesys_remove(filename);  
+	// Print whether this was successful
+	printf("success: %s\n", success ? "true" : "false");
+	// End synchronization
+	lock_release (&syscall_lock);
+	// Return the success variable
 	return success;
 }
 
@@ -226,7 +242,7 @@ int open(const char* filename)
 
     */
 
-	// we will use a file descriptor struct
+	// allocate memory for the file descriptor
 	struct file_desc * fd_elem = malloc(sizeof(struct file_desc));
 
 	// if we open the same file at a different time we make sure the file descriptor is different
@@ -237,13 +253,115 @@ int open(const char* filename)
 
 	// removes elements first though last exclusive from their current list and inserts them just before
 	// which be either the interior element or the tail
-	//list_push_front( &thread_current()->file_list, &fd_elem->elem );
+	list_push_front( &thread_current()->file_list, &fd_elem->elem );
 	
 	if(debug)
 		printf("returned file desciptor = %d\n",fd_elem->fd);
 
 	// return the file descriptor
 	return fd_elem->fd;
+}
+
+// get file size
+int get_filesize(int fd)
+{
+	
+	// begin synchronization ::
+	lock_acquire(&syscall_lock);
+	
+	// struct for the file
+	struct file_desc *file_descriptor = get_file_descriptor(fd); // get the file descriptor
+	
+	/* If no elem having the descriptor fd exists */
+	if(file_descriptor == NULL)
+		return -1;
+	
+	// Get the file from the file_descriptor
+  	struct file* file_ptr = file_descriptor->fp;
+	
+	// get length of file
+	int fileLength = 0; //stores file length 
+	if (file_ptr != NULL) // if file is not null
+	{ 
+		// gets length of file
+		fileLength = file_length(file_ptr);
+
+		if(debug)
+			printf( "get_filesize( int fd = %d ) -> filelength = %d\n", fd, fileLength );
+	}
+	
+	// end synchronization ::
+	lock_release(&syscall_lock);
+	
+	return fileLength;
+}
+
+// Function to read a designated amount of data from a file
+static int read(int fd, void *dataBuf, unsigned readSize) {
+	/* Validation */
+	// Copy the inputted dataBuffer into a byte called buffer
+	uint8_t buffer = (uint8_t *) dataBuf;
+
+  	// Create an unsigned int to store the data from the file
+  	unsigned data = 0;
+  	// If the file descriptor is the standard input (0) .aka reading from the keyboard
+  	if (fd == STDIN_FILENO) {
+  		// While data is smaller than the read size
+		while (data < readSize) {
+			// Store the keyboard input as the dataBuf
+      		*((char *)dataBuf+data) = input_getc();
+      		// Increment the data variable
+      		data++;
+    	}
+    	// Return the data variable
+		return data;
+    }
+
+    /* Load the file from the file decriptor */
+    // Sychronisation - aquire a lock from the current thread so that the file can't be edited while accessing it
+  	lock_acquire(&syscall_lock);
+  	// Get the file descriptor for the corresponding fd number
+  	struct file_desc * file_descriptor;
+  	file_descriptor = get_file_descriptor(fd);
+  	// Get the file from the file_descriptor
+  	struct file* file = file_descriptor->fp;
+  	// If the file is NULL
+  	if (file == NULL) {
+  		// Relase the file
+    	lock_release(&syscall_lock);
+    	// Return -1 representing a failure
+    	return -1;
+    }
+
+  	// Set the data to the results of a file read
+  	data = file_read(file, dataBuf, readSize);
+
+  	// Release the file being read
+  	lock_release(&syscall_lock);
+  	// Return the data from the file as an integer
+	return (int) data;
+}
+
+// Get the position of the from the beggining in the open file (file descriptor)
+static unsigned tell(int fd) {
+    // Synchronisation - lock the file so that it cannot be opened by another process
+  	lock_acquire(&syscall_lock);
+  	// Get the file descriptor for the corresponding fd number
+  	struct file_desc * file_descriptor = get_file_descriptor(fd);
+  	// Get the file from the file_descriptor
+  	struct file* acFile = file_descriptor->fp;
+  	// If the file is Null
+  	if (acFile == NULL) {
+  		// Release the file
+      	lock_release(&syscall_lock);
+      	// Return -1 representing a failure
+      	return -1;
+    }
+  	// Get the actual position in the file
+  	unsigned pos = file_tell(acFile);
+  	// Release the file
+  	lock_release(&syscall_lock);
+  	return pos;
 }
 
 // called when a sys call is not implemented
@@ -265,8 +383,8 @@ syscall_handler (struct intr_frame *f UNUSED)
 	int syscall_number = *(int*)f->esp;
 	
 	// debug log
-    if(debug)
-	    printf( "syscall_handler -> invoked syscall_number = %d\n", syscall_number );
+    //if(debug)
+	    //printf( "syscall_handler -> invoked syscall_number = %d\n", syscall_number );
 	
 	// handle the enum via switch statement
 	switch(syscall_number)
@@ -303,7 +421,7 @@ syscall_handler (struct intr_frame *f UNUSED)
 
 			// validate memory
 			// invalid pointers must be rejected without harm to the kernel or other running processes
-			if(!IsValidVAddress(f->esp + 1))
+			if(!IsValidVAddress(grabFromStack(f, 4))) // 1
 			{
 				if(debug)
 					printf( "Pointers not valid exiting thread :: kernal violation...\n" );
@@ -315,7 +433,7 @@ syscall_handler (struct intr_frame *f UNUSED)
 			}
 			
 			// get the command line pointer from the stack
-			const char* cmdline = ((char*) *((int*)f->esp + 1));
+			const char* cmdline = ((char*) grabFromStack(f, 4)); // 1
 			
             // execute program and get the processID
 			// set the EAX register :: System calls that return a value can do so
@@ -331,7 +449,7 @@ syscall_handler (struct intr_frame *f UNUSED)
 			
 			// validate memory
 			// invalid pointers must be rejected without harm to the kernel or other running processes
-			if(!IsValidVAddress(f->esp + 1))
+			if(!IsValidVAddress(f->esp + 1)) // f->esp + 1
 			{
 				if(debug)
 					printf( "Pointers not valid exiting thread :: kernal violation...\n" );
@@ -344,7 +462,7 @@ syscall_handler (struct intr_frame *f UNUSED)
 
 			// invoke syscall wait
 			// set the EAX register :: System calls that return a value can do so
-			f->eax = wait(*((int*)f->esp + 1));
+			f->eax = wait(*((int*)f->esp + 1)); // *((int*)f->esp + 1)
 			
 			break;
 		case SYS_CREATE:
@@ -380,8 +498,13 @@ syscall_handler (struct intr_frame *f UNUSED)
 			break;
 		case SYS_REMOVE:
 			
-			// Implement 
+			if(debug) // debug log 
+				printf("SYS_REMOVE called\n");
 			
+			// Get the file name from the stack
+			char* fileName = ((char*) *((int*)f->esp + 1));
+			// Remove the file and save the result to
+			f->eax = remove_file(fileName);
 			break;
 		case SYS_OPEN:
 			
@@ -414,14 +537,33 @@ syscall_handler (struct intr_frame *f UNUSED)
 			f->eax = open(open_filename);
 			
 			break;
-		case SYS_FILESIZE:
+		case SYS_FILESIZE: // Chris has not responded so Charles has implemented it
 			
-			// Implement 
-			
+			if(debug)
+				printf("SYS_FILESIZE called\n");
+
+			// get file descriptor from the stack
+			// set the EAX register :: System calls that return a value can do so
+			// by modifying the eax member of struct intr_frame
+  			f->eax = get_filesize(*((int*)f->esp + 1));
+
 			break;
-		case SYS_READ:
+		case SYS_READ:;// implemented by faegan
 			
-			// Implement 
+			if(debug)
+				printf("SYS_READ called\n");
+			
+			// Get the file descriptor from the stack
+			int file_d = *(int *)(f->esp + 4);
+			
+			// Get the buffer from the stack
+			void *buff = *(char**)(f->esp + 8);
+			
+			// Set the size 
+			unsigned length = *(unsigned *)(f->esp + 12);
+			
+			// Read the file and save it to the eax register
+			f->eax = read(file_d, buff, length);
 			
 			break;
 		case SYS_WRITE:; // invoked on system write
@@ -454,10 +596,16 @@ syscall_handler (struct intr_frame *f UNUSED)
 			// Implement 
 			
 			break;
-		case SYS_TELL:
-			
-			// Implement 
-			
+		case SYS_TELL: // implemented by faegan
+
+			if(debug)
+				printf("SYS_TELL called\n");
+
+			// Get the file descriptor value from the stack
+			fd = *(int *)(f->esp + 4);
+			// Get the position in the file from the file descriptor number and save it tot he eax register
+			f->eax = tell(fd);
+			// Break the switch statement
 			break;
 		case SYS_CLOSE:
 			

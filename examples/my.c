@@ -8,14 +8,18 @@ main (void)
 	
 	//halt();
 	
-	//exec();
-	//wait(
-	//exec("echo Natalie Portman is the reason I work out. I have this fantasy where we start talking at the Vanity Fair Oscars party bar");//);
-    exec("echo Natalie Portman is the reason I work out.");
+	//exec("echo"); // works
+	int processID = (int)
+	//exec("echo");
+	wait(processID); // works
+	printf("Wait success\n now creating testfile\n\n");
 	create("testfile", 5);
-	open("testfile");
+	filesize(open("testfile"));
 	
-	//wait(0);
+	
+	//close("testfile");
+	//remove("testfile", 5);
+
 	
     return EXIT_SUCCESS;
 }

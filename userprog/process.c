@@ -20,7 +20,10 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
-struct child * get_child(tid_t,struct thread *);
+
+struct process *process_create (tid_t tid);
+struct process *get_child_process (struct thread *t, tid_t child_tid);
+void update_parent_process_status (struct thread *child, enum process_status status);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -29,29 +32,70 @@ struct child * get_child(tid_t,struct thread *);
 tid_t
 process_execute (const char *file_name) 
 {
-  char *fn_copy;
-  tid_t tid;
+	
+	printf("process_execute -> file_name = %s\n", file_name);
+	
+	char *fn_copy;		// reference to palloc page
+	tid_t tid;			// reference to current thread id 
+	struct thread *cur; // reference to current thread
+	struct process *cur_p;  // reference to our process information
 
-  /* Make a copy of FILE_NAME.
-     Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
-    return TID_ERROR;
+	/* Make a copy of FILE_NAME.
+	Otherwise there's a race between the caller and load(). */
+	fn_copy = palloc_get_page (0); // 0 PAL_USER | PAL_ZERO
 	
-    strlcpy (fn_copy, file_name, PGSIZE);
+	// check if the fn_copy returned null if so this process executed an error
+	if (fn_copy == NULL)
+	{	
+		// debug log process execute
+		printf("process_execute (FAILED fn_copy==null) -> file_name = %s\n", file_name);
+		
+		return TID_ERROR;	
+	}
+
+	strlcpy (fn_copy, file_name, PGSIZE);
 	char *save_ptr, *real_name; // variables for strtok_r  
-	
+
 	// strip the arguments from the actual file name of the program
 	real_name = strtok_r(file_name, " ", &save_ptr);
-	
+
+	// debug log process execute
 	printf("process_execute -> real_name = %s  file_name = %s\n", real_name, file_name);
 
-  /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (real_name, PRI_DEFAULT, start_process, fn_copy);
+	/* Create a new thread to execute FILE_NAME. */
+	tid = thread_create (real_name, PRI_DEFAULT, start_process, fn_copy);
+	
+	// if error free page
+	if (tid == TID_ERROR)
+	{
+		palloc_free_page (fn_copy); 	
+	}
+	
+	// get the current thread
+	cur = thread_current ();
+	
+	// current process create with thread id
+	cur_p = process_create (tid);
 
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
-  return tid;
+	// if the current process is null then woopies we failed to create a new process
+	if (cur_p == NULL)
+	{
+		// free page and return -1
+		palloc_free_page (fn_copy); 
+		return -1;
+	}
+
+	// Inserts ELEM just before BEFORE, which may be either an interior element or a tail.
+	list_push_back (&cur->children, &cur_p->elem);
+	
+	// check process load status if is failed then return -1
+	if (cur_p->process_status == LOAD_FAILED)
+	{
+		return -1;	
+	}
+
+	// if we are successful then woola
+	return tid;
 }
 
 /* A thread function that loads a user process and starts it
@@ -59,9 +103,10 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
-  char *file_name = file_name_;
-  struct intr_frame if_;
-  bool success;
+  	char *file_name = file_name_;
+  	struct intr_frame if_;
+  	bool success;
+	struct thread* thread = thread_current(); // get the current thread to update process
 	
 	printf("start_process -> file_name = %s\n", file_name);
 
@@ -73,6 +118,10 @@ start_process (void *file_name_)
 
   success = load (file_name, &if_.eip, &if_.esp);
   
+  // depending on the successful load of a process we will return a difference status
+  // bless ternary operators!!!
+  update_parent_process_status(thread, success ? LOAD_COMPLETE : LOAD_FAILED);
+	
   /* If load failed, quit. */
   palloc_free_page (file_name);
   if (!success) 
@@ -101,70 +150,40 @@ int
 process_wait (tid_t child_tid UNUSED) 
 {
     // FIXME: @bgaster --- quick hack to make sure processes execute!
-  	for(;;) ;
+  	//for(;;) ;
     
-  //return -1;
+    //return -1;
 	
-	// we will check our thread for children if its empty then return -1 status code
-	if(list_empty(&thread_current()->children))
-    	return -1;
+	// get the current thread
+	struct thread *cur = thread_current ();
 	
-	/* If current thread has no child with id = child_tid
-	return -1 */
-	
-	// get the current child within the current thread
-	struct child * child = get_child(child_tid,thread_current());
+	// get the current child process
+	struct process *p = get_child_process (cur, child_tid);
+	int exit_status; // temp variable for exit status because we will remove the child later
 
-	// if its null return -1 status code
-	if(child == NULL)
-	{
+	// not a child (or invalid)
+	if (p == NULL)
 		return -1;
-	}
 
-	// Set waiton_child of current thread to child_tid
-	thread_current()->waiton_child = child_tid;
+	// already being waited for
+	if (p->waiting)
+		return -1;
 
-	// we check if the child is still alive, if it has not updated its parent struct then we need to sleep it
-	if (child->used != 1)
-		sema_down(&thread_current()->child_sem);
+	// mark it as being waited for
+	p->waiting = true;
 
-	// Tests the value of expression. If it evaluates to zero (false), the kernel panics.
-	ASSERT (child->used == 1);
-	
-	// Retrieve return value 
-	int child_value = child->ret_val;
+	// wait for process to exit if it hasn't already
+	exit_status = p->exit_status;
 
-	// Remove child from children's list and free its memory
-	list_remove(&child->elem);
-	
-	// free child
-	free(child);
+	// remove child process now that it's done with
+	list_remove (&p->elem);
+	free (p);
 
-	// return child value
-	return child_value;
+	// return the exit status
+	return exit_status;
+
 }
 
-// struct get child
-struct child * get_child(tid_t id,struct thread * curr)
-{
-	// our itertable list
-	struct list_elem * e;
-	
-	// for every element in list start to end
-	for (e= list_begin(&curr->children); e!= list_end( &curr->children); e=list_next(e))
-	{
-		
-		// get the child
-		struct child * child = list_entry(e,struct child,elem);
-		
-		// compare id to find matching id
-		if(child->id == id)
-	  		return child; // return matching id
-	}
-	
-	// if no child is fouind return null
-	return NULL;
-}
 
 /* Free the current process's resources. */
 void
@@ -173,6 +192,13 @@ process_exit (void)
 	struct thread *cur = thread_current ();
 	uint32_t *pd;
 
+	/* 
+	
+		SOME SORT OF CODE IMPLMENTATION NEEDS TO GO IN HERE
+		TO TERMINATE CHILD PROCESSES
+	
+	*/
+	
 	// assign the thread exit code to the structure
 	cur->exit_code = thread_exitcode();
 
@@ -218,36 +244,6 @@ process_activate (void)
 	 interrupts. */
 	tss_update ();
 }
-
-/* Functios for handling child processes */
-
-/* get_child_process */
-/*struct thread *get_child_process(int pid)
-{
-	struct list *child_list = &(thread_current()->child_list);
-	struct thread *child_process = NULL;
-	struct list_elem *element;
-
-	//find child process and return
-	for(element=list_begin(child_list); element != list_end(child_list);            		element=list_next(element))
-	{
-		child_process = list_entry(element,struct thread,childelem);
-		if(child_process->tid == pid)
-			return child_process;
-	}
-	return NULL;     
-}*/
-/* remove_child_process */
-/*void
-remove_child_process(struct thread *cp)
-{
-	if(cp != NULL)
-	{
-		list_remove(&(cp->childelem));
-		palloc_free_page(cp);
-	}
-}*/
-
 
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
@@ -565,31 +561,41 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp,  char **argv, int argc) 
 {
-  uint8_t *kpage;
-  bool success = false;
-	
-  printf( "setup_stack -> esp = %s, argv = %s, argc = %d \n", esp, argv, argc );
+	uint8_t *kpage;
+	bool success = false;
 
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kpage != NULL) 
-    {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success) 
-	  {
-			
+	printf( "setup_stack -> esp = %s, argv = %s, argc = %d \n", esp, argv, argc );
+
+	// obtain a single free page to return its kernal virtual address
+	// PAL_USER is set so the page is obtained from the user pool
+	// PAL_ZERO is set so the page is filled with zeros
+	kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+	
+	// we check for kpage just in case because if there are no pages
+	// then we recieve a null pointer
+	if (kpage != NULL) 
+	{
+		// mapping from the user virtual address UPAGE to kernal adress KPAGE to the page table
+		success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+
+		// on success
+		if (success) 
+		{
+
 		  *esp = PHYS_BASE; 		// get the stack
 		  int i = argc;				// get the argument number from the load function       
 		  uint32_t * arr[argc];   	// this array holds reference to differences arguments in the stack       
 
+		  // setup arguments
 		  // while i less than or equal to 0 decrement i by 1
 		  while(--i >= 0) 
 		  { 
 			  // subtrack the length of the argument + 1 * size of the char (1 byte) size from the stack
 			  *esp = *esp -(strlen(argv[i])+1)*sizeof(char);
-			  
+
 			  // set element at i with the refernce of esp e.g. the arguments stored in the stack
 			  arr[i] = (uint32_t *)*esp;
-			  
+
 			  // copying the argument to the esp (stack) at i;
 			  memcpy(*esp,argv[i],strlen(argv[i])+1);
 		  } 
@@ -605,26 +611,28 @@ setup_stack (void **esp,  char **argv, int argc)
 			  (*(uint32_t **)(*esp)) = arr[i]; 	// reference to an arugment pointer in the stack as int 32
 		  } 
 
-		  
 		  // as far as everyone is aware it shifts the data into the bottom section of the hex dump
 		  *esp = *esp -4; // shift the data in the stack by moving it back by 4
-		  
+
 		  // shift data in 4 segments in stack of c0000000 c0000010
 		  (*(uintptr_t  **)(*esp)) = (*esp+4); 
-		  
+
 		  // shift everything in the stack back by 4 again
 		  *esp = *esp -4; 
-		  
+
 		  // inject our argc arguments number which is stored at the top as 02 if the command is "echo x"
 		  *(int *)(*esp) = argc; 
-		  
+
 		  // move everything in the stack by negative 4
 		  *esp = *esp -4;
-		  
 		  (*(int *)(*esp)) = 0; // another sentinel stack pointer target to be 0
-		  
-      } else
-        palloc_free_page (kpage);
+
+		} 
+		else
+		{
+			palloc_free_page (kpage);
+		}
+        
     }
 
 	// debug hex dump :: prints out contents of the stack between base and current esp posistion
@@ -652,5 +660,78 @@ install_page (void *upage, void *kpage, bool writable)
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
 }
+
+// this function creates a pointer to a struct when called
+struct process *process_create (tid_t tid) // we accept a thread id
+{
+	// we request to allocate memory for our struct and get a pointer
+  	struct process *p_ptr = malloc (sizeof (struct process));
+
+	// null check the pointer
+	if (p_ptr == NULL)
+		return p_ptr; // return if not null 
+
+	// we 
+	//memset (p_ptr, 0, sizeof (struct process));
+	
+	// convert the thread id to process id which is defiend in process.h
+	// thread id is also an int
+	p_ptr->pid = (pid_t)tid;
+	
+	// set thread status variables
+	p_ptr->running = true;
+	p_ptr->waiting = false;
+	p_ptr->process_status = NOT_LOADED;
+
+	// return struct pointer
+  	return p_ptr;
+}
+
+// this function creates a pointer to a struct when called
+struct process *get_child_process (struct thread *t, tid_t child_tid)
+{
+	struct list_elem *e;
+	struct process *p;
+
+	// null check the thread
+	if (t == NULL)
+		printf("struct thread *t returned null\n");
+		return NULL;
+
+	// for every element within the threads children
+	for (e = list_begin (&t->children); e != list_end (&t->children);e = list_next (e))
+	{
+		// get the process struct
+		p = list_entry (e, struct process, elem);
+
+		// we need to check if the target child thread id is the same as the process id
+		if (p->pid == (pid_t) child_tid)
+			return p; // if so return it
+	}
+
+	// if we could not find our process id return null it has no child processes
+	return NULL;
+}
+
+// called when we want to update a parent process status given a thread and process_status
+void update_parent_process_status (struct thread *child, enum process_status status)
+{
+	// get the child process from the thread
+  	struct process *p = get_child_process (child->parent, child->tid);
+
+	// null check
+	if (p != NULL)
+	{
+		// if the process is valid update its status
+  		p->process_status = status;
+	}
+	else
+	{
+		// debug log
+		printf("update_parent_process_status -> get_child_process return null\n");
+	}
+
+}
+
 
 //--------------------------------------------------------------------

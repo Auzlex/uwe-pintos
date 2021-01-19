@@ -117,7 +117,7 @@ struct thread
     struct list children;
     
     // Reference to parent thread will be used for passing return status to parent thread
-    struct thread * parent;
+    struct thread *parent;
 	
 	// Used when a thread waits for a child
     struct semaphore child_sem;
