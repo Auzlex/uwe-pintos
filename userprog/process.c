@@ -18,6 +18,9 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+// boolean used to hide debug logs
+static bool DebugLogs = true;
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
@@ -33,7 +36,8 @@ tid_t
 process_execute (const char *file_name) 
 {
 	
-	printf("process_execute -> file_name = %s\n", file_name);
+	if(DebugLogs) // debug log
+		printf("process_execute -> file_name = %s\n", file_name);
 	
 	char *fn_copy;		// reference to palloc page
 	tid_t tid;			// reference to current thread id 
@@ -47,8 +51,8 @@ process_execute (const char *file_name)
 	// check if the fn_copy returned null if so this process executed an error
 	if (fn_copy == NULL)
 	{	
-		// debug log process execute
-		printf("process_execute (FAILED fn_copy==null) -> file_name = %s\n", file_name);
+		if(DebugLogs) // debug log
+			printf("process_execute (FAILED fn_copy==null) -> file_name = %s\n", file_name);
 		
 		return TID_ERROR;	
 	}
@@ -59,8 +63,8 @@ process_execute (const char *file_name)
 	// strip the arguments from the actual file name of the program
 	real_name = strtok_r(file_name, " ", &save_ptr);
 
-	// debug log process execute
-	printf("process_execute -> real_name = %s  file_name = %s\n", real_name, file_name);
+	if(DebugLogs) // debug log
+		printf("process_execute -> real_name = %s  file_name = %s\n", real_name, file_name);
 
 	/* Create a new thread to execute FILE_NAME. */
 	tid = thread_create (real_name, PRI_DEFAULT, start_process, fn_copy);
@@ -72,7 +76,7 @@ process_execute (const char *file_name)
 	}
 	
 	// get the current thread
-	cur = thread_current ();
+	cur = thread_current();
 	
 	// current process create with thread id
 	cur_p = process_create (tid);
@@ -82,6 +86,13 @@ process_execute (const char *file_name)
 	{
 		// free page and return -1
 		palloc_free_page (fn_copy); 
+		
+		// free process
+		free(cur_p);
+		
+		if(DebugLogs) // debug log
+			printf("process_execute() -> cur_p == NULL\n");
+		
 		return -1;
 	}
 
@@ -91,8 +102,13 @@ process_execute (const char *file_name)
 	// check process load status if is failed then return -1
 	if (cur_p->process_status == LOAD_FAILED)
 	{
+		if(DebugLogs) // debug log
+			printf("cur_p->process_status == LOAD_FAILED\n");
 		return -1;	
 	}
+	
+	//Frees block P, which must have been previously allocated with malloc(), calloc(), or realloc().
+	//free(cur_p);
 
 	// if we are successful then woola
 	return tid;
@@ -106,26 +122,33 @@ start_process (void *file_name_)
   	char *file_name = file_name_;
   	struct intr_frame if_;
   	bool success;
-	struct thread* thread = thread_current(); // get the current thread to update process
 	
-	printf("start_process -> file_name = %s\n", file_name);
+	if(DebugLogs) // debug log
+		printf("start_process -> file_name = %s\n", file_name);
 
-  /* Initialize interrupt frame and load executable. */
-  memset (&if_, 0, sizeof if_);
-  if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
-  if_.cs = SEL_UCSEG;
-  if_.eflags = FLAG_IF | FLAG_MBS;
+	/* Initialize interrupt frame and load executable. */
+	memset (&if_, 0, sizeof if_);
+	if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
+	if_.cs = SEL_UCSEG;
+	if_.eflags = FLAG_IF | FLAG_MBS;
 
-  success = load (file_name, &if_.eip, &if_.esp);
-  
-  // depending on the successful load of a process we will return a difference status
-  // bless ternary operators!!!
-  update_parent_process_status(thread, success ? LOAD_COMPLETE : LOAD_FAILED);
+	// return success on load
+	success = load (file_name, &if_.eip, &if_.esp);
+
+	/* If load failed, quit. */
+	palloc_free_page (file_name);
+	if (!success) 
+	{
+		// if thread fails
+		thread_current()->exit_code = -1;
+		thread_exit ();
+	}
 	
-  /* If load failed, quit. */
-  palloc_free_page (file_name);
-  if (!success) 
-    thread_exit ();
+	// so if we successfully load the process lets update their parent process
+	// pass in the current thread
+	// depending on the successful load of a process we will return a difference status
+	// bless ternary operators!!!
+	update_parent_process_status(thread_current(), success ? LOAD_COMPLETE : LOAD_FAILED);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -133,8 +156,8 @@ start_process (void *file_name_)
      arguments on the stack in the form of a `struct intr_frame',
      we just point the stack pointer (%esp) to our stack frame
      and jump to it. */
-  asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
-  NOT_REACHED ();
+	asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
+	NOT_REACHED ();
 }
 
 /* Waits for thread TID to die and returns its exit status.  If
@@ -163,11 +186,20 @@ process_wait (tid_t child_tid UNUSED)
 
 	// not a child (or invalid)
 	if (p == NULL)
+	{
+		if(DebugLogs) // debug log
+			printf("p == null -> returning -1\n", (int)child_tid);
 		return -1;
+	}
+		
 
 	// already being waited for
 	if (p->waiting)
+	{
+		if(DebugLogs) // debug log
+			printf("p is already waiting -> returning -1\n", (int)child_tid);
 		return -1;
+	}
 
 	// mark it as being waited for
 	p->waiting = true;
@@ -175,8 +207,13 @@ process_wait (tid_t child_tid UNUSED)
 	// wait for process to exit if it hasn't already
 	exit_status = p->exit_status;
 
+	if(DebugLogs) // debug log
+		printf("process_wait*( child_tid = %d ) -> invoked.\n", (int)child_tid);
+	
 	// remove child process now that it's done with
 	list_remove (&p->elem);
+	
+	//Frees block P, which must have been previously allocated with malloc(), calloc(), or realloc().
 	free (p);
 
 	// return the exit status
@@ -198,6 +235,16 @@ process_exit (void)
 		TO TERMINATE CHILD PROCESSES
 	
 	*/
+	
+	/* Deallocating each child process' memory
+     from children's list */
+	while(!list_empty(&cur->children))
+	{
+		struct list_elem * e = list_pop_front(&cur->children);
+		struct process * p = list_entry(e,struct process,elem);
+		list_remove(e);
+		free(p);
+	}
 	
 	// assign the thread exit code to the structure
 	cur->exit_code = thread_exitcode();
@@ -664,50 +711,104 @@ install_page (void *upage, void *kpage, bool writable)
 // this function creates a pointer to a struct when called
 struct process *process_create (tid_t tid) // we accept a thread id
 {
+	
+	if(DebugLogs) // debug log
+	{	
+		printf("process_create( tid_t tid = %d )\n",(int)tid);
+		printf("process_create( tid_t tid = %d )\n",tid);	
+	}
+	
 	// we request to allocate memory for our struct and get a pointer
   	struct process *p_ptr = malloc (sizeof (struct process));
 
 	// null check the pointer
 	if (p_ptr == NULL)
-		return p_ptr; // return if not null 
-
-	// we 
-	//memset (p_ptr, 0, sizeof (struct process));
+	{
+		if(DebugLogs) // debug log
+			printf("p_ptr returned null -> process_create will return -1\n");
+		return NULL; // return null because it failed to allocate memory
+	}
+		
+	// we set the size of the pointer to be the size of the struct
+	memset (p_ptr, 0, sizeof (struct process));
 	
 	// convert the thread id to process id which is defiend in process.h
 	// thread id is also an int
 	p_ptr->pid = (pid_t)tid;
 	
+	if(DebugLogs) // debug log
+		printf("\n\nprocess struct pid = %d\n\n",p_ptr->pid);
+	
+	// set the thread status first
+	p_ptr->process_status = NOT_LOADED;
+	
 	// set thread status variables
 	p_ptr->running = true;
 	p_ptr->waiting = false;
-	p_ptr->process_status = NOT_LOADED;
+	
+	// initialize list elem on the process
+	list_init(&p_ptr->elem);
 
 	// return struct pointer
   	return p_ptr;
 }
 
+/*static inline bool
+is_head (struct list_elem *elem)
+{
+  return elem != NULL && elem->prev == NULL && elem->next != NULL;
+}
+
+static inline bool
+is_interior (struct list_elem *elem)
+{
+  return elem != NULL && elem->prev != NULL && elem->next != NULL;
+}*/
+
 // this function creates a pointer to a struct when called
-struct process *get_child_process (struct thread *t, tid_t child_tid)
+struct process *get_child_process (struct thread *t, tid_t thread_id)
 {
 	struct list_elem *e;
 	struct process *p;
+	
 
 	// null check the thread
 	if (t == NULL)
-		printf("struct thread *t returned null\n");
-		return NULL;
-
-	// for every element within the threads children
-	for (e = list_begin (&t->children); e != list_end (&t->children);e = list_next (e))
 	{
-		// get the process struct
-		p = list_entry (e, struct process, elem);
-
-		// we need to check if the target child thread id is the same as the process id
-		if (p->pid == (pid_t) child_tid)
-			return p; // if so return it
+		if(DebugLogs) // debug log
+			printf("struct thread *t returned null\n");
+		return NULL;
 	}
+		
+	//if(DebugLogs) // debug log
+		//printf("\nITERATION LIST DEBUG:\n\n");
+	
+	// null check next elem in the list
+	/*if(is_head(e) != NULL)
+	{
+		// for every element within the threads children
+		for (e = list_begin (&t->children); e != list_end (&t->children);e = list_next (e))
+		{
+
+			//if(is_head(e) != NULL)
+			//{
+				// get the process struct
+				p = list_entry (e, struct process, elem);
+
+				//if(DebugLogs) // debug log
+					//printf("ids %d == %d\n", (pid_t)p->pid, (int)thread_id);
+
+				// we need to check if the target child thread id is the same as the process id
+				if (p->pid == (pid_t) thread_id)
+					return p; // if so return it
+			//}
+
+		}
+
+	}*/
+	
+	//if(DebugLogs) // debug log
+		//printf("\n\nITERATION LIST DEBUG END\n\n");
 
 	// if we could not find our process id return null it has no child processes
 	return NULL;
@@ -727,9 +828,12 @@ void update_parent_process_status (struct thread *child, enum process_status sta
 	}
 	else
 	{
-		// debug log
-		printf("update_parent_process_status -> get_child_process return null\n");
+		if(DebugLogs) // debug log
+			printf("update_parent_process_status( struct thread*child->tid = %d ) -> get_child_process return null\n", (int)child->tid);
 	}
+	
+	//Frees block P, which must have been previously allocated with malloc(), calloc(), or realloc().
+	//free (p);
 
 }
 

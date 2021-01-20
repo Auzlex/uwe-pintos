@@ -5,21 +5,21 @@
 enum 
   {
     /* Projects 2 and later. */
-    SYS_HALT,                   /* Halt the operating system. */ 				// done
-    SYS_EXIT,                   /* Terminate this process. */ 					// done
+    SYS_HALT,                   /* Halt the operating system. */ 				// done and tested
+    SYS_EXIT,                   /* Terminate this process. */ 					// done and tested
 		
-    SYS_EXEC,                   /* Start another process. */					// done
-    SYS_WAIT,                   /* Wait for a child process to die. */			// done
+    SYS_EXEC,                   /* Start another process. */					// done and tested (broken with args)
+    SYS_WAIT,                   /* Wait for a child process to die. */			// done and tested (broken and does not wait)
 		
-    SYS_CREATE,                 /* Create a file. */							// done
-    SYS_REMOVE,                 /* Delete a file. */							// done 	
-    SYS_OPEN,                   /* Open a file. */								// done
-    SYS_FILESIZE,               /* Obtain a file's size. */						// not done needs testing
+    SYS_CREATE,                 /* Create a file. */							// done and tested
+    SYS_REMOVE,                 /* Delete a file. */							// done and tested 	
+    SYS_OPEN,                   /* Open a file. */								// done and tested
+    SYS_FILESIZE,               /* Obtain a file's size. */						// done and tested
     SYS_READ,                   /* Read from a file. */							// done not tested
     SYS_WRITE,                  /* Write to a file. */							// done
     SYS_SEEK,                   /* Change position in a file. */				// not done
     SYS_TELL,                   /* Report current position in a file. */		// done needs tested
-    SYS_CLOSE,                  /* Close a file. */								// not done
+    SYS_CLOSE,                  /* Close a file. */								// done and tested
 
     /* Project 3 and optionally project 4. */
     SYS_MMAP,                   /* Map a file into memory. */

@@ -29,8 +29,8 @@ struct process
 	bool waiting;							// to determine if the process is waiting
 	int exit_status;                		// exit status code of the process
 	enum process_status process_status; 	// status of the process
-	struct semaphore sem_wait;        		// Used to wait for a process to exit before returning it's exit status.
-	struct semaphore sem_load;        		// Used to wait for the file being executed to load (or fail to load).
+	struct semaphore sema_wait;        		// Used to wait for a process to exit before returning it's exit status.
+	struct semaphore sema_initialization;   // Used to wait on init for the file being executed to load (or fail to load).
 };
 
 /* File descriptor struct */

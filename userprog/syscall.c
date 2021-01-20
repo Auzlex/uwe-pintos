@@ -43,15 +43,6 @@ void syscall_init (void)
 }
 
 /* 
-	Helper Functions
-*/
-
-int grabFromStack(struct intr_frame *f UNUSED, int pos)
-{
-	return *((int *) (f->esp + pos));
-}
-
-/* 
 	Memory Validation Functions
 */
 
@@ -105,7 +96,6 @@ void halt(void)
 {
 	shutdown_power_off();
 }
-
 
 // Terminates the current user program while returning status to the kernal.
 void exit(int status)
@@ -198,6 +188,7 @@ bool create(char* filename, unsigned size)
 
 // Function to remove a file from the filesystem.dsk
 bool remove_file(char* filename) {
+
 	// Create a boolean to store whether the file remove was successful
 	bool success;
 	// Begin synchronization
@@ -217,6 +208,13 @@ bool remove_file(char* filename) {
 int open(const char* filename)
 {
 
+	if(filename == NULL)
+	{
+		if(debug)
+			printf("given filename is null\n");
+		return -1;
+	}
+
 	// begin synchronization :: because a file can be opened by a single process or different processes which implies child processes
 	lock_acquire(&syscall_lock);
 
@@ -228,8 +226,12 @@ int open(const char* filename)
 	
 	// if the file pointer is null then return -1 as bad file name or we cannot open it???
 	if (fp == NULL) 
+	{
+		if(debug)
+			printf("file does not exist fp == null\n");
+
 		return -1;
-	
+	}
 	/* 
     
         FILE DESCRIPTOR STRUCT REFERENCE in process.h
@@ -296,11 +298,69 @@ int get_filesize(int fd)
 	return fileLength;
 }
 
+// Writes size bytes from buffer to the open file fd
+int write (int fd, void *buffer, unsigned size)
+{
+
+	if(debug)
+	{
+		printf( "write (int fd = %d, void *buffer, unsigned size %d)\n", fd, (unsigned )size );
+	}
+
+	// check if we can actually write out
+	if(fd == STDOUT_FILENO) // STDOUT
+	{
+		// writes n characters to the BUFFER to the console
+		putbuf((const char*)buffer, (unsigned )size);
+		
+		return size;
+	}
+	else
+	{
+		int fs = -1;
+
+		// struct for the file
+		struct file_desc *file_descriptor = get_file_descriptor(fd); // get the file descriptor
+		
+		/* If no elem having the descriptor fd exists */
+		if(file_descriptor == NULL)
+		{
+			return fs;
+		}
+		
+		// Get the file from the file_descriptor
+		struct file* file_ptr = file_descriptor->fp;
+
+		// begin sync
+		lock_acquire(&syscall_lock);
+
+		// write to the file using filesys function
+		fs = file_write(file_ptr,buffer,size);
+
+		// end sync
+		lock_release(&syscall_lock);
+		
+		return fs;
+	}
+}
+
 // Function to read a designated amount of data from a file
 static int read(int fd, void *dataBuf, unsigned readSize) {
 	/* Validation */
 	// Copy the inputted dataBuffer into a byte called buffer
-	uint8_t buffer = (uint8_t *) dataBuf;
+	//uint8_t buffer = (uint8_t *) dataBuf;
+
+	// writes n characters to the BUFFER to the console
+	if(debug)
+	{
+		printf( "read(int fd = %d, void *dataBuf, unsigned readSize = %d)\n", fd, (unsigned )readSize );
+	}	
+
+	// if the file desciptor is minus 1 then bogo we got a faulty fd stop here!
+	if(fd == -1)
+	{
+		return -1;
+	}
 
   	// Create an unsigned int to store the data from the file
   	unsigned data = 0;
@@ -317,27 +377,27 @@ static int read(int fd, void *dataBuf, unsigned readSize) {
 		return data;
     }
 
-    /* Load the file from the file decriptor */
-    // Sychronisation - aquire a lock from the current thread so that the file can't be edited while accessing it
-  	lock_acquire(&syscall_lock);
   	// Get the file descriptor for the corresponding fd number
   	struct file_desc * file_descriptor;
   	file_descriptor = get_file_descriptor(fd);
+
   	// Get the file from the file_descriptor
   	struct file* file = file_descriptor->fp;
   	// If the file is NULL
   	if (file == NULL) {
-  		// Relase the file
-    	lock_release(&syscall_lock);
     	// Return -1 representing a failure
     	return -1;
     }
+
+    // Sychronisation - aquire a lock from the current thread so that the file can't be edited while accessing it
+  	lock_acquire(&syscall_lock);
 
   	// Set the data to the results of a file read
   	data = file_read(file, dataBuf, readSize);
 
   	// Release the file being read
-  	lock_release(&syscall_lock);
+  	lock_release(&syscall_lock);	
+
   	// Return the data from the file as an integer
 	return (int) data;
 }
@@ -362,6 +422,51 @@ static unsigned tell(int fd) {
   	// Release the file
   	lock_release(&syscall_lock);
   	return pos;
+}
+
+void close_via_fd (int fd)
+{
+	if(debug)
+		printf("close_via_fd(int fd = %d)\n",fd);
+	
+	// if the file desciptor is minus 1 then bogo we got a faulty fd stop here!
+	if(fd == -1)
+	{
+		return -1;
+	}
+
+	// Get the file descriptor for the corresponding fd number
+	struct file_desc * file_descriptor = get_file_descriptor(fd);
+	
+  	// Get the file from the file_descriptor
+  	struct file* acFile = file_descriptor->fp;
+	
+  	// If the file is Null
+	
+  	if (acFile == NULL) 
+	{
+  		// Release the file
+      	lock_release(&syscall_lock);
+		
+      	// Return -1 representing a failure
+      	return -1;
+    }
+	
+	// Synchronisation
+  	lock_acquire(&syscall_lock);
+	
+	// invoke the filesys to close the file with the filepointer in the file descriptor
+	file_close(acFile);
+	
+	// end Synchronisation
+	lock_release(&syscall_lock);
+	
+	// remove the file descriptor from the list elem
+  	list_remove(&file_descriptor->elem);
+	
+	// remove file_descriptor from memory with free because we used malloc to assigned it in memory
+  	free(file_descriptor);
+	
 }
 
 // called when a sys call is not implemented
@@ -421,7 +526,7 @@ syscall_handler (struct intr_frame *f UNUSED)
 
 			// validate memory
 			// invalid pointers must be rejected without harm to the kernel or other running processes
-			if(!IsValidVAddress(grabFromStack(f, 4))) // 1
+			if(!IsValidVAddress(f->esp + 1)) // 1
 			{
 				if(debug)
 					printf( "Pointers not valid exiting thread :: kernal violation...\n" );
@@ -433,7 +538,7 @@ syscall_handler (struct intr_frame *f UNUSED)
 			}
 			
 			// get the command line pointer from the stack
-			const char* cmdline = ((char*) grabFromStack(f, 4)); // 1
+			const char* cmdline = ((char*) *((int*)f->esp + 1)); // 1
 			
             // execute program and get the processID
 			// set the EAX register :: System calls that return a value can do so
@@ -501,6 +606,19 @@ syscall_handler (struct intr_frame *f UNUSED)
 			if(debug) // debug log 
 				printf("SYS_REMOVE called\n");
 			
+			// validate memory
+			// invalid pointers must be rejected without harm to the kernel or other running processes
+			if(!IsValidVAddress(f->esp + 1))
+			{
+				if(debug)
+					printf( "Pointers not valid exiting thread :: kernal violation...\n" );
+				
+				// if any IsValidVAddress returns false
+				// halt code here as the thread will be terminated
+				exit(-1); // is invoked because why continue if we have bad memory here
+				return;
+			}
+			
 			// Get the file name from the stack
 			char* fileName = ((char*) *((int*)f->esp + 1));
 			// Remove the file and save the result to
@@ -542,6 +660,19 @@ syscall_handler (struct intr_frame *f UNUSED)
 			if(debug)
 				printf("SYS_FILESIZE called\n");
 
+			// validate memory
+			// invalid pointers must be rejected without harm to the kernel or other running processes
+			if(!IsValidVAddress(f->esp + 1))
+			{
+				if(debug)
+					printf( "Pointers not valid exiting thread :: kernal violation...\n" );
+				
+				// if any IsValidVAddress returns false
+				// halt code here as the thread will be terminated
+				exit(-1); // is invoked because why continue if we have bad memory here
+				return;
+			}
+			
 			// get file descriptor from the stack
 			// set the EAX register :: System calls that return a value can do so
 			// by modifying the eax member of struct intr_frame
@@ -550,8 +681,21 @@ syscall_handler (struct intr_frame *f UNUSED)
 			break;
 		case SYS_READ:;// implemented by faegan
 			
-			if(debug)
-				printf("SYS_READ called\n");
+			//if(debug)
+				//printf("SYS_READ called\n");
+			
+			// validate memory
+			// invalid pointers must be rejected without harm to the kernel or other running processes
+			if(!IsValidVAddress(f->esp + 4) || !IsValidVAddress(f->esp + 8) || !IsValidVAddress(f->esp + 12))
+			{
+				if(debug)
+					printf( "Pointers not valid exiting thread :: kernal violation...\n" );
+				
+				// if any IsValidVAddress returns false
+				// halt code here as the thread will be terminated
+				exit(-1); // is invoked because why continue if we have bad memory here
+				return;
+			}
 			
 			// Get the file descriptor from the stack
 			int file_d = *(int *)(f->esp + 4);
@@ -568,6 +712,21 @@ syscall_handler (struct intr_frame *f UNUSED)
 			break;
 		case SYS_WRITE:; // invoked on system write
 			
+
+
+			// validate memory
+			// invalid pointers must be rejected without harm to the kernel or other running processes
+			if(!IsValidVAddress(f->esp + 4) || !IsValidVAddress(f->esp + 8) || !IsValidVAddress(f->esp + 12))
+			{
+				if(debug)
+					printf( "Pointers not valid exiting thread :: kernal violation...\n" );
+				
+				// if any IsValidVAddress returns false
+				// halt code here as the thread will be terminated
+				exit(-1); // is invoked because why continue if we have bad memory here
+				return;
+			}
+			
 			// information reference https://www.quora.com/What-is-the-file-descriptor-What-are-STDIN_FILENO-STDOUT_FILENO-and-STDERR_FILENO
 			// get the file descriptor from the stack
 			int fd = *(int *)(f->esp + 4);
@@ -578,18 +737,9 @@ syscall_handler (struct intr_frame *f UNUSED)
 			// size of buffer
 			unsigned size = *(unsigned *)(f->esp + 12);
 
-			// check if we can actually write out
-			if(fd == STDOUT_FILENO)
-			{
-                // writes n characters to the BUFFER to the console
-				putbuf((const char*)buffer, (unsigned )size);
-			}
-			else
-			{
-				// print out error that we can't output
-				printf("sys_write does not support fd output\n");
-			}
-			
+			// write to file
+			f->eax = write(fd, buffer, size);
+
 			break;
 		case SYS_SEEK:
 			
@@ -601,6 +751,19 @@ syscall_handler (struct intr_frame *f UNUSED)
 			if(debug)
 				printf("SYS_TELL called\n");
 
+			// validate memory
+			// invalid pointers must be rejected without harm to the kernel or other running processes
+			if(!IsValidVAddress(f->esp + 4))
+			{
+				if(debug)
+					printf( "Pointers not valid exiting thread :: kernal violation...\n" );
+				
+				// if any IsValidVAddress returns false
+				// halt code here as the thread will be terminated
+				exit(-1); // is invoked because why continue if we have bad memory here
+				return;
+			}
+			
 			// Get the file descriptor value from the stack
 			fd = *(int *)(f->esp + 4);
 			// Get the position in the file from the file descriptor number and save it tot he eax register
@@ -609,7 +772,24 @@ syscall_handler (struct intr_frame *f UNUSED)
 			break;
 		case SYS_CLOSE:
 			
-			// Implement 
+			if(debug)
+				printf("SYS_CLOSE called\n");
+			
+			// validate memory
+			// invalid pointers must be rejected without harm to the kernel or other running processes
+			if(!IsValidVAddress(f->esp + 1))
+			{
+				if(debug)
+					printf( "Pointers not valid exiting thread :: kernal violation...\n" );
+				
+				// if any IsValidVAddress returns false
+				// halt code here as the thread will be terminated
+				exit(-1); // is invoked because why continue if we have bad memory here
+				return;
+			}
+			
+			// get the fd from the stack and bomvayage file!
+			close_via_fd(*((int*)f->esp + 1)); // 4
 			
 			break;
 			
