@@ -19,9 +19,15 @@ void halt(void);
 void exit(int status);
 tid_t exec(const char* cmd_line);
 int wait(tid_t id);
-
 bool create(char* filename, unsigned size);
+bool remove_file(char* filename);
 int open(const char* filename);
+int get_filesize(int fd);
+int write (int fd, void *buffer, unsigned size);
+void seek (int fd, unsigned position);
+int read(int fd, void *dataBuf, unsigned readSize);
+unsigned tell(int fd);
+void close_via_fd (int fd);
 
 void throw_not_implemented_message_and_terminate_thread(int syscallnum);
 static void syscall_handler (struct intr_frame *);
@@ -187,7 +193,8 @@ bool create(char* filename, unsigned size)
 }
 
 // Function to remove a file from the filesystem.dsk
-bool remove_file(char* filename) {
+bool remove_file(char* filename) 
+{
 
 	// Create a boolean to store whether the file remove was successful
 	bool success;
@@ -302,11 +309,6 @@ int get_filesize(int fd)
 int write (int fd, void *buffer, unsigned size)
 {
 
-	if(debug)
-	{
-		printf( "write (int fd = %d, void *buffer, unsigned size %d)\n", fd, (unsigned )size );
-	}
-
 	// check if we can actually write out
 	if(fd == STDOUT_FILENO) // STDOUT
 	{
@@ -317,6 +319,12 @@ int write (int fd, void *buffer, unsigned size)
 	}
 	else
 	{
+
+		if(debug)
+		{
+			printf( "write (int fd = %d, void *buffer, unsigned size %d)\n", fd, (unsigned )size );
+		}
+			
 		int fs = -1;
 
 		// struct for the file
@@ -344,8 +352,41 @@ int write (int fd, void *buffer, unsigned size)
 	}
 }
 
+// Returns the position of the next byte to be read or written in open file fd, expressed in bytes from the beginning of the file. 
+void seek (int fd, unsigned position)
+{
+
+	if(debug) // debug
+		printf( "seek( int fd = %d, unsigned position = %d )\n", fd, (int)position );
+
+	// struct for the file
+	struct file_desc *file_descriptor = get_file_descriptor(fd); // get the file descriptor
+
+	/* If no elem having the descriptor fd exists */
+	if(file_descriptor == NULL)
+		return -1;
+
+	// Get the file from the file_descriptor
+	struct file* file_ptr = file_descriptor->fp;
+
+	// get length of file
+	int fileLength = 0; //stores file length 
+	if (file_ptr == NULL) // if file is null return -1
+	{ 
+		return -1;
+	}
+
+	// begin synchronization ::
+	lock_acquire(&syscall_lock);
+	// perform file seek
+	file_seek(file_ptr,position);
+	// end synchronization ::
+	lock_release(&syscall_lock);
+}
+
 // Function to read a designated amount of data from a file
-static int read(int fd, void *dataBuf, unsigned readSize) {
+int read(int fd, void *dataBuf, unsigned readSize) 
+{
 	/* Validation */
 	// Copy the inputted dataBuffer into a byte called buffer
 	//uint8_t buffer = (uint8_t *) dataBuf;
@@ -403,7 +444,8 @@ static int read(int fd, void *dataBuf, unsigned readSize) {
 }
 
 // Get the position of the from the beggining in the open file (file descriptor)
-static unsigned tell(int fd) {
+unsigned tell(int fd) 
+{
     // Synchronisation - lock the file so that it cannot be opened by another process
   	lock_acquire(&syscall_lock);
   	// Get the file descriptor for the corresponding fd number
@@ -712,8 +754,6 @@ syscall_handler (struct intr_frame *f UNUSED)
 			break;
 		case SYS_WRITE:; // invoked on system write
 			
-
-
 			// validate memory
 			// invalid pointers must be rejected without harm to the kernel or other running processes
 			if(!IsValidVAddress(f->esp + 4) || !IsValidVAddress(f->esp + 8) || !IsValidVAddress(f->esp + 12))
@@ -741,9 +781,31 @@ syscall_handler (struct intr_frame *f UNUSED)
 			f->eax = write(fd, buffer, size);
 
 			break;
-		case SYS_SEEK:
+		case SYS_SEEK:;
 			
-			// Implement 
+			if(debug)
+				printf("SYS_SEEK called\n");
+			
+			// invalid pointers must be rejected without harm to the kernel or other running processes
+			if(!IsValidVAddress(f->esp + 4) || !IsValidVAddress(f->esp + 5))
+			{
+				if(debug)
+					printf( "Pointers not valid exiting thread :: kernal violation...\n" );
+				
+				// if any IsValidVAddress returns false
+				// halt code here as the thread will be terminated
+				exit(-1); // is invoked because why continue if we have bad memory here
+				return;
+			}
+			
+			// get the file descriptor from the stack
+			int tfd = *(int *)(f->esp + 4);
+			
+			// posistion
+			unsigned pos = *(unsigned *)(f->esp + 5);
+
+			// seek with file descriptor
+			seek(tfd, pos);
 			
 			break;
 		case SYS_TELL: // implemented by faegan

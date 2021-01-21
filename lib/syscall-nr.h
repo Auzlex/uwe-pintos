@@ -15,10 +15,10 @@ enum
     SYS_REMOVE,                 /* Delete a file. */							// done and tested 	
     SYS_OPEN,                   /* Open a file. */								// done and tested
     SYS_FILESIZE,               /* Obtain a file's size. */						// done and tested
-    SYS_READ,                   /* Read from a file. */							// done not tested
-    SYS_WRITE,                  /* Write to a file. */							// done
-    SYS_SEEK,                   /* Change position in a file. */				// not done
-    SYS_TELL,                   /* Report current position in a file. */		// done needs tested
+    SYS_READ,                   /* Read from a file. */							// done and tested not sure
+    SYS_WRITE,                  /* Write to a file. */							// done and tested not sure
+    SYS_SEEK,                   /* Change position in a file. */				// done and tested
+    SYS_TELL,                   /* Report current position in a file. */		// done and tested
     SYS_CLOSE,                  /* Close a file. */								// done and tested
 
     /* Project 3 and optionally project 4. */
